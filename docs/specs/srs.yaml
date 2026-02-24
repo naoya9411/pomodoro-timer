@@ -1,0 +1,329 @@
+---
+# =====================================================================
+# SRS (Software Requirements Specification) — PWA ポモドーロタイマー
+# Spec-Driven Development (SDD) シングルソース
+# =====================================================================
+id: srs-pomodoro-timer
+title: PWA ポモドーロタイマー — ソフトウェア要件仕様書
+version: "1.0"
+status: draft
+created_at: "2026-02-24"
+authors:
+  - naoya9411
+
+# =====================================================================
+# プロジェクト概要
+# =====================================================================
+project:
+  name: pomodoro-timer
+  description: >
+    ポモドーロ・テクニックに基づくPWAタイマーアプリ。
+    作業セッション・休憩サイクルの管理、タスク追跡、
+    作業ログの記録・統計、プッシュ通知をサポートする。
+  repository: https://github.com/naoya9411/pomodoro-timer
+
+# =====================================================================
+# 技術スタック
+# =====================================================================
+stack:
+  frontend:
+    framework: React + TypeScript
+    bundler: Vite
+    pwa: vite-plugin-pwa (Workbox)
+    hosting: Cloudflare Pages
+  backend:
+    language: Go
+    runtime: Cloudflare Workers
+    router: chi
+    worker_adapter: syumai/workers
+  database:
+    provider: Cloudflare D1
+    engine: SQLite
+  auth:
+    method: JWT (email / password)
+  infra:
+    iac: Terraform + Terragrunt
+    environments:
+      - dev
+      - prod
+  ci_cd:
+    platform: GitHub Actions
+
+# =====================================================================
+# 機能要件 (Functional Requirements)
+# =====================================================================
+requirements:
+  # -------------------------------------------------------------------
+  # FR-AUTH: ユーザー認証
+  # -------------------------------------------------------------------
+  - id: FR-AUTH-001
+    title: メール＋パスワードによるユーザー登録
+    priority: must
+    description: ユーザーはメールアドレスとパスワードでアカウントを作成できる。
+    acceptance_criteria:
+      - メールアドレスとパスワードを入力して登録できる
+      - 登録済みメールでの重複登録はエラーになる
+      - パスワードは最低8文字以上を要求する
+
+  - id: FR-AUTH-002
+    title: ログイン / ログアウト
+    priority: must
+    description: 登録済みユーザーはメール＋パスワードでログインできる。
+    acceptance_criteria:
+      - 正しい認証情報でJWTトークンが発行される
+      - ログアウト操作でトークンが無効化される
+      - 無効なトークンでのAPIアクセスは401を返す
+
+  - id: FR-AUTH-003
+    title: JWTリフレッシュ
+    priority: should
+    description: アクセストークンの有効期限が切れた場合、リフレッシュトークンで自動更新する。
+    acceptance_criteria:
+      - アクセストークン有効期限: 15分
+      - リフレッシュトークン有効期限: 7日間
+
+  # -------------------------------------------------------------------
+  # FR-TIMER: タイマー機能
+  # -------------------------------------------------------------------
+  - id: FR-TIMER-001
+    title: ポモドーロサイクル
+    priority: must
+    description: 作業 → 短休憩 → (4サイクル後) 長休憩 のサイクルをサポートする。
+    acceptance_criteria:
+      - デフォルト: 作業25分、短休憩5分、長休憩15分
+      - サイクル数は設定でカスタマイズ可能
+      - サイクル完了時に通知を送信する
+
+  - id: FR-TIMER-002
+    title: タイマーカスタマイズ
+    priority: should
+    description: 作業時間・休憩時間・長休憩間隔を設定から変更できる。
+    acceptance_criteria:
+      - 作業時間: 1〜60分
+      - 短休憩: 1〜30分
+      - 長休憩: 1〜60分
+      - 長休憩サイクル数: 2〜8回
+
+  - id: FR-TIMER-003
+    title: バックグラウンド動作
+    priority: must
+    description: アプリがバックグラウンドにあってもタイマーは動作し続ける。
+    acceptance_criteria:
+      - Service Worker でタイマー状態を保持する
+      - 画面を閉じてもタイマーはカウントダウンを継続する
+      - バックグラウンドでもセッション完了時に通知する
+
+  - id: FR-TIMER-004
+    title: タイマー操作
+    priority: must
+    description: タイマーを開始・一時停止・リセット・スキップできる。
+    acceptance_criteria:
+      - 開始/一時停止ボタン
+      - リセットボタン (現在のセッションを最初から)
+      - スキップボタン (次のフェーズへ)
+
+  # -------------------------------------------------------------------
+  # FR-TASK: タスク管理
+  # -------------------------------------------------------------------
+  - id: FR-TASK-001
+    title: タスクのCRUD
+    priority: must
+    description: タスクの作成・参照・更新・削除ができる。
+    acceptance_criteria:
+      - タスク名を入力して追加できる
+      - タスク一覧を表示できる
+      - タスク名を編集できる
+      - タスクを削除できる
+
+  - id: FR-TASK-002
+    title: タスクとポモドーロの関連付け
+    priority: should
+    description: タイマー実行時に対象タスクを選択し、セッションをタスクに紐付ける。
+    acceptance_criteria:
+      - タイマー開始前にタスクを選択できる
+      - セッション完了時に選択タスクへのポモドーロ数が加算される
+      - タスクごとの消化ポモドーロ数を表示する
+
+  - id: FR-TASK-003
+    title: タスク完了
+    priority: should
+    description: タスクを完了済みとしてマークできる。
+    acceptance_criteria:
+      - チェックボックスで完了/未完了をトグルできる
+      - 完了タスクはリストの下部または別セクションに表示される
+
+  # -------------------------------------------------------------------
+  # FR-LOG: 作業ログ・統計
+  # -------------------------------------------------------------------
+  - id: FR-LOG-001
+    title: ポモドーロセッションの自動記録
+    priority: must
+    description: セッション完了時に作業ログを自動保存する。
+    acceptance_criteria:
+      - 開始時刻・終了時刻・タスクIDを記録する
+      - バックエンドAPIへ保存する
+      - オフライン時はローカルに保存し、オンライン復帰後に同期する
+
+  - id: FR-LOG-002
+    title: 統計表示
+    priority: should
+    description: 日別・週別のポモドーロ数と作業時間を表示する。
+    acceptance_criteria:
+      - 今日の完了ポモドーロ数を表示する
+      - 今週の完了ポモドーロ数を表示する
+      - タスク別の消化数を表示する
+
+  # -------------------------------------------------------------------
+  # FR-NOTIF: プッシュ通知
+  # -------------------------------------------------------------------
+  - id: FR-NOTIF-001
+    title: Web Push 通知
+    priority: must
+    description: セッション完了時にブラウザプッシュ通知を送信する。
+    acceptance_criteria:
+      - ユーザーが通知を許可した場合に送信される
+      - 作業セッション完了時に「休憩しましょう」を通知する
+      - 休憩セッション完了時に「作業を再開しましょう」を通知する
+      - 通知クリックでアプリにフォーカスする
+
+  - id: FR-NOTIF-002
+    title: 通知音
+    priority: could
+    description: セッション完了時に通知音を鳴らす。
+    acceptance_criteria:
+      - 設定でオン/オフを切り替えられる
+      - デフォルトはオン
+
+  # -------------------------------------------------------------------
+  # FR-SETTINGS: 設定
+  # -------------------------------------------------------------------
+  - id: FR-SETTINGS-001
+    title: ダークモード
+    priority: should
+    description: ライト/ダーク/システム連動のテーマを選択できる。
+    acceptance_criteria:
+      - 設定画面でテーマを切り替えられる
+      - OS設定に連動する「システム」オプションを持つ
+      - 設定はローカルストレージに永続化される
+
+  - id: FR-SETTINGS-002
+    title: タイマー設定の永続化
+    priority: must
+    description: タイマー設定をサーバーに保存し、デバイス間で共有できる。
+    acceptance_criteria:
+      - 設定変更はAPIへ保存される
+      - ログイン後に設定が復元される
+
+# =====================================================================
+# 非機能要件 (Non-Functional Requirements)
+# =====================================================================
+non_functional:
+  - id: NFR-PWA-001
+    title: PWA インストール
+    description: ホーム画面へのインストールをサポートする (manifest.json)。
+  - id: NFR-PWA-002
+    title: オフライン対応
+    description: Service Worker によりコアUIをオフラインで使用できる。
+  - id: NFR-PERF-001
+    title: Lighthouse スコア
+    description: Performance / Accessibility / PWA 各スコア ≥ 90。
+  - id: NFR-SEC-001
+    title: HTTPS 必須
+    description: 全通信はHTTPS。JWTはHttpOnly Cookieで管理する。
+  - id: NFR-A11Y-001
+    title: アクセシビリティ
+    description: WCAG 2.1 AA 準拠。キーボード操作・スクリーンリーダー対応。
+  - id: NFR-RESP-001
+    title: レスポンシブデザイン
+    description: モバイルファースト。375px〜1440px の画面幅に対応。
+
+# =====================================================================
+# データモデル
+# =====================================================================
+data_model:
+  tables:
+    - name: users
+      columns:
+        - { name: id, type: TEXT, pk: true, note: "UUIDv4" }
+        - { name: email, type: TEXT, unique: true, nullable: false }
+        - { name: password_hash, type: TEXT, nullable: false }
+        - { name: created_at, type: DATETIME, nullable: false }
+        - { name: updated_at, type: DATETIME, nullable: false }
+
+    - name: settings
+      columns:
+        - { name: user_id, type: TEXT, pk: true, fk: "users.id" }
+        - { name: work_minutes, type: INTEGER, default: 25 }
+        - { name: short_break_minutes, type: INTEGER, default: 5 }
+        - { name: long_break_minutes, type: INTEGER, default: 15 }
+        - { name: long_break_interval, type: INTEGER, default: 4 }
+        - { name: sound_enabled, type: INTEGER, default: 1, note: "BOOLEAN" }
+        - { name: theme, type: TEXT, default: "'system'" }
+        - { name: updated_at, type: DATETIME, nullable: false }
+
+    - name: tasks
+      columns:
+        - { name: id, type: TEXT, pk: true, note: "UUIDv4" }
+        - { name: user_id, type: TEXT, nullable: false, fk: "users.id" }
+        - { name: title, type: TEXT, nullable: false }
+        - { name: completed, type: INTEGER, default: 0, note: "BOOLEAN" }
+        - { name: pomodoro_count, type: INTEGER, default: 0 }
+        - { name: created_at, type: DATETIME, nullable: false }
+        - { name: updated_at, type: DATETIME, nullable: false }
+
+    - name: pomodoro_sessions
+      columns:
+        - { name: id, type: TEXT, pk: true, note: "UUIDv4" }
+        - { name: user_id, type: TEXT, nullable: false, fk: "users.id" }
+        - { name: task_id, type: TEXT, nullable: true, fk: "tasks.id" }
+        - { name: type, type: TEXT, nullable: false, note: "work|short_break|long_break" }
+        - { name: started_at, type: DATETIME, nullable: false }
+        - { name: ended_at, type: DATETIME, nullable: true }
+        - { name: completed, type: INTEGER, default: 0, note: "BOOLEAN" }
+        - { name: created_at, type: DATETIME, nullable: false }
+
+# =====================================================================
+# APIエンドポイント一覧
+# =====================================================================
+api_endpoints:
+  base_path: /api/v1
+  auth:
+    - { method: POST, path: /auth/register, description: ユーザー登録, auth_required: false }
+    - { method: POST, path: /auth/login,    description: ログイン・JWT発行, auth_required: false }
+    - { method: POST, path: /auth/logout,   description: ログアウト, auth_required: true }
+    - { method: POST, path: /auth/refresh,  description: トークンリフレッシュ, auth_required: false }
+  settings:
+    - { method: GET,  path: /settings, description: 設定取得, auth_required: true }
+    - { method: PUT,  path: /settings, description: 設定更新, auth_required: true }
+  tasks:
+    - { method: GET,    path: /tasks,      description: タスク一覧取得, auth_required: true }
+    - { method: POST,   path: /tasks,      description: タスク作成, auth_required: true }
+    - { method: PUT,    path: /tasks/{id}, description: タスク更新, auth_required: true }
+    - { method: DELETE, path: /tasks/{id}, description: タスク削除, auth_required: true }
+  sessions:
+    - { method: GET,  path: /sessions,      description: セッション履歴取得, auth_required: true }
+    - { method: POST, path: /sessions,      description: セッション記録, auth_required: true }
+    - { method: GET,  path: /sessions/stats, description: 統計情報取得, auth_required: true }
+
+# =====================================================================
+# 画面一覧
+# =====================================================================
+screens:
+  - id: SCR-001
+    name: ログイン画面
+    route: /login
+  - id: SCR-002
+    name: ユーザー登録画面
+    route: /register
+  - id: SCR-003
+    name: タイマー画面 (メイン)
+    route: /
+  - id: SCR-004
+    name: タスク管理画面
+    route: /tasks
+  - id: SCR-005
+    name: 履歴・統計画面
+    route: /history
+  - id: SCR-006
+    name: 設定画面
+    route: /settings
