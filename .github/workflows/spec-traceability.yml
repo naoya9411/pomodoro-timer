@@ -1,0 +1,79 @@
+name: Spec Traceability Check
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  spec-traceability:
+    name: 仕様 ID トレーサビリティ検証
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check spec ID in PR body
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request.body || '';
+
+            // SRS に定義された有効な仕様 ID のパターン
+            const specIdPattern = /\b(FR-(AUTH|TIMER|TASK|LOG|NOTIF|SETTINGS)-\d{3}|NFR-(PWA|PERF|SEC|A11Y|RESP)-\d{3}|SCR-\d{3})\b/g;
+
+            const foundIds = body.match(specIdPattern);
+
+            if (!foundIds || foundIds.length === 0) {
+              core.setFailed(
+                '❌ PR 本文に仕様 ID が見つかりません。\n' +
+                'docs/specs/srs.yaml を参照し、関連する仕様 ID (例: FR-TIMER-001) を ' +
+                'PR の「実装した仕様」セクションに記載してください。\n\n' +
+                '有効な仕様 ID 形式:\n' +
+                '  FR-AUTH-001, FR-TIMER-001, FR-TASK-001,\n' +
+                '  FR-LOG-001, FR-NOTIF-001, FR-SETTINGS-001,\n' +
+                '  NFR-PWA-001, NFR-PERF-001, NFR-SEC-001, etc.'
+              );
+            } else {
+              const uniqueIds = [...new Set(foundIds)];
+              core.info(`✅ 仕様 ID が確認されました: ${uniqueIds.join(', ')}`);
+            }
+
+      - name: Validate spec IDs against SRS
+        run: |
+          PR_BODY='${{ github.event.pull_request.body }}'
+          SRS_FILE="docs/specs/srs.yaml"
+
+          if [ ! -f "$SRS_FILE" ]; then
+            echo "⚠️  $SRS_FILE が見つかりません。スキップします。"
+            exit 0
+          fi
+
+          # PR 本文から仕様 ID を抽出
+          PR_IDS=$(echo "$PR_BODY" | grep -oE '\b(FR|NFR|SCR)-[A-Z]+-[0-9]{3}\b' | sort -u || true)
+
+          if [ -z "$PR_IDS" ]; then
+            echo "仕様 ID が見つかりません（前ステップでチェック済み）。"
+            exit 0
+          fi
+
+          # SRS ファイル内の ID を抽出
+          SRS_IDS=$(grep -oE '\bid: (FR|NFR|SCR)-[A-Z]+-[0-9]{3}\b' "$SRS_FILE" | awk '{print $2}' | sort -u || true)
+
+          INVALID_IDS=""
+          while IFS= read -r id; do
+            if ! echo "$SRS_IDS" | grep -q "^${id}$"; then
+              INVALID_IDS="${INVALID_IDS} ${id}"
+            fi
+          done <<< "$PR_IDS"
+
+          if [ -n "$INVALID_IDS" ]; then
+            echo "⚠️  以下の仕様 ID は srs.yaml に定義されていません:${INVALID_IDS}"
+            echo "docs/specs/srs.yaml を確認し、正しい ID を使用してください。"
+            # 警告のみとし、失敗にはしない（新規 ID 追加の場合があるため）
+          else
+            echo "✅ 全ての仕様 ID が srs.yaml で確認できました。"
+          fi
